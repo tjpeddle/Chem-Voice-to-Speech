@@ -666,11 +666,24 @@ function initSpeech() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) { document.getElementById('noSupport').style.display='block'; return false; }
   recognition = new SR();
-  recognition.continuous = true;
+  recognition.continuous = false;
   recognition.interimResults = true;
   recognition.lang = 'en-US';
   recognition.onresult = handleSpeechResult;
-  recognition.onend = () => { if (isRecording) recognition.start(); };
+  recognition.onend = () => {
+    // Auto-stop when browser detects end of speech
+    if (isRecording) {
+      isRecording = false;
+      const mainBtn = document.getElementById('micBtn');
+      const quizBtn = document.getElementById('quizMicBtn');
+      if (mainBtn) mainBtn.classList.remove('recording');
+      if (quizBtn) quizBtn.classList.remove('recording');
+      if (recordingTarget === 'main') {
+        document.getElementById('micStatus').textContent = 'Done — click Convert to see your formula.';
+        document.getElementById('micStatus').className = 'mic-status success';
+      }
+    }
+  };
   recognition.onerror = (e) => { if (e.error !== 'no-speech') console.warn('SR error:', e.error); };
   return true;
 }
@@ -736,8 +749,31 @@ function speakText(text) {
   if (!window.speechSynthesis) return;
   speechSynthesis.cancel();
   const utt = new SpeechSynthesisUtterance(text);
-  utt.rate = 0.95; utt.pitch = 1;
+  utt.rate = 0.92; utt.pitch = 1;
   speechSynthesis.speak(utt);
+}
+
+// Converts formula like "H₂SO₄" into speakable "H 2 S O 4"
+function formulaToSpoken(formula) {
+  // Convert using charCode ranges — subscript digits are U+2080–U+2089
+  let plain = '';
+  for (let i = 0; i < formula.length; i++) {
+    const code = formula.charCodeAt(i);
+    if (code >= 0x2080 && code <= 0x2089) {
+      plain += (code - 0x2080).toString(); // ₀=0x2080, ₁=0x2081 ... ₉=0x2089
+    } else {
+      plain += formula[i];
+    }
+  }
+  // Now space out elements and numbers so TTS reads each token separately
+  // e.g. "H2O" → "H 2 O", "Fe2O3" → "Fe 2 O 3", "Ca(OH)2" → "Ca (O H) 2"
+  plain = plain
+    .replace(/([A-Z][a-z]?)(\d+)/g, '$1 $2 ')
+    .replace(/([A-Z][a-z]?)(?=[A-Z(])/g, '$1 ')
+    .replace(/([A-Z][a-z]?)(\s*)$/g, '$1')
+    .replace(/\(([^)]+)\)\s*(\d*)/g, (m, g1, g2) => ` (${g1}) ${g2} `)
+    .replace(/\s+/g, ' ').trim();
+  return plain;
 }
 
 function playSuccessSound() {
@@ -860,7 +896,7 @@ function convertAndShow() {
     addHistory(match, text);
     playSuccessSound();
     showToast(`✓ ${match.name}`, '⚗️', 'var(--accent2)');
-    speakText(match.name + ". Formula: " + match.formula);
+    speakText(match.name + ". Formula: " + formulaToSpoken(match.formula));
   } else {
     const raw = buildRawFormula(text);
     if (raw) {
@@ -870,7 +906,7 @@ function convertAndShow() {
       addHistory(currentFormula, text);
       playSuccessSound();
       showToast('Formula parsed!', '⚗️', 'var(--accent)');
-      speakText("Formula: " + raw.formula);
+      speakText("Formula: " + formulaToSpoken(raw.formula));
     } else {
       display.innerHTML = `<span style="color:var(--accent3);font-size:0.95rem;font-family:'Outfit',sans-serif;">Could not recognize "${text}". Check the Reference tab for how to speak formulas.</span>`;
       nameEl.textContent = '';
@@ -922,7 +958,7 @@ function copyFormula() {
 
 function speakFormula() {
   if (!currentFormula) { showToast('No formula to read yet', '⚠️', 'var(--accent4)'); return; }
-  speakText(currentFormula.name + ". Formula: " + currentFormula.formula);
+  speakText(currentFormula.name + ". Formula: " + formulaToSpoken(currentFormula.formula));
 }
 
 function copyText(text, btn) {
@@ -1033,7 +1069,7 @@ function checkQuizAnswer() {
     document.getElementById('resultMsg').textContent = 'Correct! ' + quizCurrent.name;
     document.getElementById('resultDetail').textContent = 'Formula: ' + quizCurrent.formula;
     playSuccessSound();
-    speakText("Correct! " + quizCurrent.name);
+    speakText("Correct! " + quizCurrent.name + ". Formula: " + formulaToSpoken(quizCurrent.formula));
     if (quizStreak >= 3) {
       const sb = document.getElementById('streakBadge');
       sb.textContent = `🔥 ${quizStreak} in a row!`;
@@ -1046,7 +1082,7 @@ function checkQuizAnswer() {
     document.getElementById('resultMsg').textContent = `The answer was: ${quizCurrent.name}`;
     document.getElementById('resultDetail').textContent = `You said: "${raw}" · Formula: ${quizCurrent.formula}`;
     playErrorSound();
-    speakText("The correct answer was: " + quizCurrent.name);
+    speakText("The correct answer was: " + quizCurrent.name + ". Formula: " + formulaToSpoken(quizCurrent.formula));
   }
 
   updateScores();
